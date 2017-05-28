@@ -18,3 +18,4 @@ proceedings(pubid#title#year)<br>
 article(pubid#title#aid1;: : :;aidk#appearsin#startpage#endpage)</p>
 
 <h3>Database Schema</h3>
+<img src="https://cloud.githubusercontent.com/assets/10762987/26526321/be7499b8-4344-11e7-9678-b270b194c03b.png">
