@@ -1,0 +1,189 @@
+#include<stdio.h>
+#include<stdlib.h>
+#include<stdbool.h>
+#include<string.h>
+#include "util.h"
+
+EXEC SQL INCLUDE SQLCA; 
+
+EXEC SQL BEGIN DECLARE SECTION;
+    char a_name[23];
+    char name[23];
+    char pubid[11];
+    char title[71];
+    char publisher[51];
+    char appearsin[11];
+    char type[12];
+    
+    sqlint32 year;
+    sqlint32 volume;
+    sqlint32 number;
+    sqlint32 startpage;
+    sqlint32 endpage;
+
+    char db[6] = "cs348";
+EXEC SQL END DECLARE SECTION;
+
+void print_authors() {
+    EXEC SQL DECLARE C2 CURSOR FOR
+        select trim(a.name)
+        from author a, wrote w
+        where w.pubid = :pubid and 
+            a.aid = w.aid
+        order by w.aorder;
+
+    EXEC SQL OPEN C2;
+  
+    printf("Authors:");
+
+    EXEC SQL FETCH C2 INTO :name;
+    while(SQLCODE != 100){
+        printf(" %s", name);
+        EXEC SQL FETCH C2 INTO :name;
+        if (SQLCODE == 100) break;
+        printf(",");
+    }
+
+    EXEC SQL CLOSE C2;
+    printf("\n");
+}
+
+void print_publications() {
+    if (!strcmp(type, "book")) {  // Print Book Info.
+        EXEC SQL
+        select publisher INTO :publisher
+        from book
+        where pubid = :pubid;
+    
+        print_authors();
+        printf("Publishher: %s\nYear: %d\n", publisher, year);
+    }  else if (!strcmp(type, "journal")) {  // Print Journal Info.
+        EXEC SQL
+        select volume, number INTO :volume, :number
+        from journal
+        where pubid = :pubid;
+
+        printf("Volume: %d\nNumber: %d\nYear: %d\n", volume, number, year);
+    } else if (!strcmp(type, "proceedings")) {  // Print Proceeding Info.
+        printf("Year: %d\n", year);
+    } else if (!strcmp(type, "article")) {  // Print Article Info.
+        EXEC SQL
+        select appearsin, startpage, endpage INTO :appearsin, :startpage, :endpage
+        from article
+        where pubid = :pubid;
+
+        print_authors();
+        printf("In: %s\nPages: %d--%d\n", appearsin, startpage, endpage);
+    }
+
+    printf("\n");
+}
+
+void get_sorted_publications() {
+    EXEC SQL DECLARE C1 CURSOR FOR
+        with get_books(pubid, year) as (
+                select p.pubid, b.year
+                    from publication p, wrote w, author a, book b 
+                    where a.name = :a_name and
+                        p.pubid = w.pubid and
+                        w.aid = a.aid and
+                        p.pubid = b.pubid
+            ),
+            get_journals(pubid, year) as (
+                select ar.appearsin, j.year
+                from article ar, wrote w, author a, journal j
+                where a.name = :a_name and
+                    ar.pubid = w.pubid and
+                    w.aid = a.aid and
+                    ar.appearsin = j.pubid
+            ),
+            get_proceedings(pubid, year) as (
+                select ar.appearsin, p.year
+                from article ar, wrote w, author a, proceedings p
+                where a.name = :a_name and
+                    ar.pubid = w.pubid and
+                    w.aid = a.aid and
+                    ar.appearsin = p.pubid
+            ),
+            get_articles(pubid, year) as (
+                select ar.pubid, j.year
+                from article ar, wrote w, author a, journal j
+                where a.name = :a_name and
+                    ar.pubid = w.pubid and
+                    w.aid = a.aid and
+                    ar.appearsin = j.pubid
+                union
+                select ar.pubid, p.year
+                from article ar, wrote w, author a, proceedings p
+                where a.name = :a_name and
+                    ar.pubid = w.pubid and
+                    w.aid = a.aid and
+                    ar.appearsin = p.pubid
+            )            
+        select b.pubid, b.year, 'book' as type, a.name
+            from get_books b, wrote w, author a
+            where b.pubid = w.pubid and
+                w.aid = a.aid and
+                w.aorder = 1
+        union
+        select j.pubid, j.year, 'journal' as type, '' as name
+            from get_journals j
+        union
+        select p.pubid, p.year, 'proceedings' as type, '' as name
+            from get_proceedings p
+        union
+        select ar.pubid, ar.year, 'article' as type, a.name
+            from get_articles ar, wrote w, author a
+            where ar.pubid = w.pubid and
+                w.aid = a.aid and
+                w.aorder = 1
+        order by year desc, name asc;
+                
+    EXEC SQL OPEN C1;
+
+    EXEC SQL FETCH C1 INTO :pubid, :year, :type;
+
+    while(SQLCODE != 100){
+        // Print General Info.
+        printf("Pubid: %s\nType: %s\n", pubid, type);
+
+        EXEC SQL
+            select title INTO :title
+            from publication
+            where pubid = :pubid;
+
+        printf("Title: %s\n", title);
+
+        // Print Info for each particlar type of publication.
+        print_publications();
+
+        EXEC SQL FETCH C1 INTO :pubid, :year, :type;
+    }
+
+    EXEC SQL CLOSE C1;
+}
+
+int main(int argc, char *argv[]) {
+    EXEC SQL WHENEVER SQLERROR  GO TO error;
+    EXEC SQL CONNECT TO :db;
+
+    char* author_name = argv[1];
+    strcpy(a_name, author_name);
+    
+    get_sorted_publications();
+
+    EXEC SQL COMMIT;
+    EXEC SQL CONNECT reset;
+
+    return (0);
+
+error:
+    printf("update failed, sqlcode = %ld\n",SQLCODE );
+
+    EXEC SQL WHENEVER SQLERROR CONTINUE;
+
+    EXEC SQL ROLLBACK;
+    EXEC SQL CONNECT reset;
+
+    return (-1);
+}
